@@ -1,0 +1,163 @@
+USE scirt_jobs_bound;
+TRUNCATE TABLE temp_table;
+/*Empty the temp_table to ensure that if this script is runned again, the temp_table will not have duplicated value inserted from the split_column function.*/
+CALL split_column;
+/*Execute the stored split_column procedute to address the mutivalue issue in the 'route' column in 'scirt_job' table.*/
+
+SET SQL_SAFE_UPDATES = 0;
+UPDATE scirt_jobs_bound.scirt_job
+SET delivery_team = 'Fletcher' WHERE delivery_team = 'Fletcher Construction';
+SET SQL_SAFE_UPDATES = 1;
+/*After checking the delivery team in the scirt job, i found that there is 'Fletcher constructon' and 'Fletcher'. Therefore, this query removed the word 'construction' to make it uniform*/
+
+DROP DATABASE IF EXISTS MBIS623_Assignment;
+CREATE DATABASE MBIS623_Assignment;
+USE MBIS623_Assignment;
+/*For this assignment, I decided to create a new schema because if anything wrong happens during running this scirpt, it can be run again without affecting the original schema.
+I also decided to keep the original schema instead of dropping it for the same reason.*/
+
+DROP TABLE if exists delivery_team;
+CREATE TABLE IF NOT EXISTS delivery_team  (
+	delivery_team_id INT NOT NULL AUTO_INCREMENT,
+    delivery_team_name VARCHAR(50) NOT NULL,
+    PRIMARY KEY (delivery_team_id)
+); 
+/*Create a seperate table for entity 'delivery team' with auto generated ID*/
+
+INSERT INTO delivery_team (delivery_team_name)
+SELECT DISTINCT delivery_team FROM scirt_jobs_bound.scirt_job;
+/*Import the delivery team names into the 'delivery_team' table*/
+
+DROP TABLE IF EXISTS locality;
+CREATE TABLE IF NOT EXISTS locality (
+	locality_id int NOT NULL AUTO_INCREMENT,
+    locality_name varchar(50) NOT NULL UNIQUE,
+    PRIMARY KEY (locality_id)
+);
+/*Create table for entity 'locality'*/
+
+SET SQL_SAFE_UPDATES = 0;
+UPDATE scirt_jobs_bound.scirt_job
+SET locality = 'St Albans'
+WHERE locality = 'Saint Albans';
+SET SQL_SAFE_UPDATES = 1;
+/*I noticed that the same locality 'st albans' is represented as 'saint albans' in the 'scirt_job' table, therefore I updated it to make it uniform*/
+
+INSERT INTO locality (locality_name)
+SELECT DISTINCT suburb_locality FROM scirt_jobs_bound.chch_street_address;
+/*Insert the locality data from the chch_street_address table*/
+
+INSERT IGNORE INTO locality (locality_name)
+SELECT DISTINCT locality FROM scirt_jobs_bound.scirt_job; 
+/*Insert the locality data from scirt_job table, as there are duplicate values, I used 'IGNORE' to only include unique values.*/
+
+SET SQL_SAFE_UPDATES = 0;
+DELETE from scirt_jobs_bound.temp_table WHERE route = 'St Asaph to Fitzgerald';
+UPDATE scirt_jobs_bound.temp_table SET route = 'Beresford Street' WHERE route = 'Beresford to Caspian';
+UPDATE scirt_jobs_bound.temp_table SET route = 'Wilsons Road' WHERE route = 'Fitzgerald to Wilsons Road';
+UPDATE scirt_jobs_bound.temp_table SET route = 'Gloucester Street' WHERE route = 'Gloucester To Bealey';
+SET SQL_SAFE_UPDATES = 1;
+/*While I am scanning through the route for the 'scirt_job' table, there are 4 routes that contain two roads linkes with a 'to'. Therefore, in this step I am trying to delete the duplicates.
+For job_id 11061 where has 'St Asaph to Fitzgerald', both roads already individually exists under the same job_id, so I just deleted it.
+For the other 3 routes, one road already exists under the same job_id, so i just replaced the whole route with the full name of the missing road such as 'Beresford Street'.
+As there were only 4 instances, I chose to manually update on the 'temp_table' instead of the 'scirt_job table'*/
+
+DROP TABLE IF EXISTS road;
+CREATE TABLE IF NOT EXISTS ROAD (
+	road_id INT NOT NULL AUTO_INCREMENT,
+    road_name VARCHAR(50) NOT NULL UNIQUE,
+    PRIMARY KEY (road_id)
+    );  
+/*Create a table for road that will contain all the road names from two tables*/
+
+INSERT INTO road (road_name)
+SELECT DISTINCT road_name from scirt_jobs_bound.chch_street_address;
+/*Insert road names from 'chch_street_address' table*/
+
+INSERT IGNORE INTO road (road_name)
+SELECT DISTINCT route from scirt_jobs_bound.temp_table; 
+/*Insert road names from 'temp-table' which seperated the road names from the multivalued 'routes' column from 'scirt_job table'*/
+
+DROP TABLE IF EXISTS job;
+CREATE TABLE IF NOT EXISTS job (
+	job_id INT NOT NULL,
+    job_description VARCHAR(500) NOT NULL,
+    delivery_team_id INT NOT NULL,
+    locality_id INT NOT NULL,
+    job_start_date DATE NOT NULL,
+    job_end_date DATE NOT NULL,
+    PRIMARY KEY (job_id),
+    CONSTRAINT FK_delivery_team_id_job FOREIGN KEY (delivery_team_id) REFERENCES delivery_team(delivery_team_id),
+    CONSTRAINT FK_locality_id_job FOREIGN KEY (locality_id) REFERENCES locality(locality_id)
+);
+/*Create the table for the scirt jobs*/
+
+INSERT IGNORE INTO job (job_id, job_description, delivery_team_id, locality_id, job_start_date, job_end_date)
+SELECT job_id, description, delivery_team_id, locality_id, start_date, end_date
+FROM scirt_jobs_bound.scirt_job 
+INNER JOIN delivery_team ON delivery_team = delivery_team_name
+INNER JOIN locality ON locality = locality_name;
+/*Insert data into the 'job' table with mathcing delivery_team_id and locality_id*/
+
+DROP TABLE IF EXISTS job_road;
+CREATE TABLE IF NOT EXISTS job_road (
+    job_id INT NOT NULL,
+    road_id INT NOT NULL,
+    CONSTRAINT FK_job_id_JR FOREIGN KEY (job_id) REFERENCES job(job_id),
+    CONSTRAINT FK_road_id_JR FOREIGN KEY (road_id) REFERENCES road(road_id)
+    ); 
+/*Create the associative entity 'job_road' to address the many to many relation between 'job' and 'road'*/
+
+INSERT INTO job_road (job_id, road_id)
+SELECT DISTINCT job_id, road_id FROM road JOIN scirt_jobs_bound.temp_table ON route = road_name;
+/*To insert job_id and related route_id from 'scirt_job' and 'temp_table'*/
+
+DROP TABLE IF EXISTS city_town;
+CREATE TABLE IF NOT EXISTS city_town (
+	city_town_id int NOT NULL AUTO_INCREMENT,
+    city_town_name VARCHAR(50) NOT NULL UNIQUE,
+    PRIMARY KEY (city_town_id)
+);
+/*Create table for city/town'*/
+
+INSERT INTO city_town (city_town_name)
+SELECT DISTINCT town_city FROM scirt_jobs_bound.chch_street_address;
+/*Insert city/town data into 'city_town'table*/
+
+DROP TABLE IF EXISTS address;
+CREATE TABLE IF NOT EXISTS address (
+	address_id INT NOT NULL,
+    unit_value VARCHAR(10), /*I noticed that some unit_value is a combination of a number and a character like 'D9' hence I set it as VARCHAR instead of INT*/
+    address_number INT NOT NULL,
+    address_number_suffix VARCHAR(20),
+    address_number_high INT,
+    address_road_id INT NOT NULL,
+    locality_suburb_id INT NOT NULL,
+    city_town_id INT NOT NULL,
+    road_section_id INT NOT NULL,
+    CONSTRAINT FK_road_id_address FOREIGN KEY (address_road_id) REFERENCES road(road_id),
+    CONSTRAINT FK_locality_id_address FOREIGN KEY (locality_suburb_id) REFERENCES locality(locality_id),
+    CONSTRAINT FK_city_town_id_address FOREIGN KEY (city_town_id) REFERENCES city_town(city_town_id)
+);
+/*Create a table for 'address'*/
+ 
+INSERT IGNORE INTO address
+SELECT address_id, 
+	CASE 
+		WHEN unit_value = ' ' THEN NULL
+		ELSE unit_value END, /*Use 'CASE' funciton is to set the value to NULL for data with empty string from the original table. Same for the other 2 columns*/ 
+address_number,
+	CASE
+		WHEN address_number_suffix = ' ' THEN NULL
+        ELSE address_number_suffix END,
+	CASE
+		WHEN address_number_high = ' ' THEN NULL
+        ELSE address_number_high END,
+road_id, locality_id, city_town_id, road_section_id
+FROM scirt_jobs_bound.chch_street_address
+INNER JOIN road ON chch_street_address.road_name = road.road_name
+INNER JOIN locality ON suburb_locality = locality_name
+INNER JOIN city_town on city_town_name = town_city;
+/*Insert data into 'address' table from 'chch_street_address' with matching id number for road, locality and city.*/
+ 
+
